@@ -1,0 +1,5 @@
+tensorflow-gpu
+numpy
+pandas
+scikit-learn
+typer
