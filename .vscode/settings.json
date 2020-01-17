@@ -1,3 +1,4 @@
 {
-    "python.pythonPath": "/home/cristian/miniconda3/envs/simple-attention/bin/python"
+    "python.pythonPath": "/home/cristian/miniconda3/envs/simple-attention/bin/python",
+    "python.formatting.provider": "black"
 }
