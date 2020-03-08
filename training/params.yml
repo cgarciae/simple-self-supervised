@@ -1,6 +1,6 @@
 noise_std: 0.01
 n_neighbors: 6
-n_hops: 10
+n_hops: 5
 
 batch_size: 256
 steps_per_epoch: 200
