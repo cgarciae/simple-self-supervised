@@ -4,9 +4,7 @@ from pathlib import Path
 
 import dataget
 import dicto
-import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import skorch
 import torch
 import typer
@@ -14,9 +12,8 @@ from imblearn.over_sampling import RandomOverSampler
 from plotly import express as px
 from plotly import graph_objs as go
 from sklearn.decomposition import PCA
-from sklearn.manifold import TSNE
 from sklearn.neighbors import NearestNeighbors
-from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from sklearn.preprocessing import MinMaxScaler
 from skorch.helper import predefined_split
 
 
@@ -50,8 +47,20 @@ def main(
         noise_std=params.noise_std,
         n_neighbors=params.n_neighbors,
         n_hops=params.n_hops,
-        # transform=torch.tensor,
+        transform=torch.tensor,
         viz=viz,
+    )
+
+    ds_test = ContrastiveDataset(
+        X_test,
+        y_test,
+        batch_size=32,
+        steps_per_epoch=1,
+        noise_std=params.noise_std,
+        n_neighbors=params.n_neighbors,
+        n_hops=params.n_hops,
+        transform=torch.tensor,
+        viz=False,
     )
 
     if viz:
@@ -152,7 +161,7 @@ def main(
         max_epochs=params.epochs,
         lr=params.lr,
         optimizer=torch.optim.Adam,
-        # train_split=predefined_split(ds_test),
+        # train_split=lambda X, y: (X, ds_test),
         train_split=None,
         device="cuda",
     )
