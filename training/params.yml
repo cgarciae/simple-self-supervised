@@ -1,0 +1,11 @@
+noise_std: 0.01
+n_neighbors: 6
+n_hops: 10
+
+batch_size: 32
+steps_per_epoch: 200
+n_layers: 2
+n_units: 64
+embedding_size: 4
+epochs: 100
+lr: 0.005

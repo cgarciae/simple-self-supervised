@@ -1,157 +1,453 @@
+import typing
 from pathlib import Path
+from copy import copy
 
+import dataget
+import dicto
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import tensorflow as tf
+import skorch
+
+# import tensorflow as tf
+import torch
 import typer
+from imblearn.over_sampling import RandomOverSampler
 from plotly import express as px
 from plotly import graph_objs as go
-from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from sklearn.manifold import TSNE
+from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from skorch.helper import predefined_split
 
-from imblearn.over_sampling import RandomOverSampler
+
+HAS_VIZ = False
 
 
 def main(
-    data_path: Path = typer.Option(...),
-    n_classes: int = typer.Option(...),
-    memory_size: int = 8,
-    n_layers: int = 3,
-    n_neurons: int = 16,
-    radius=1.5,
-    epochs: int = 400,
+    params_path: Path = "training/params.yml",
     viz: bool = False,
+    toy: bool = False,
+    model: str = "torch",
 ) -> None:
 
-    train_path = data_path / "training-set.csv"
-    # test_path = data_path / "test-set.csv"
+    torch.autograd.set_detect_anomaly(True)
 
-    df_train = pd.read_csv(train_path, names=["x1", "x2", "label"])
-    # df_test = pd.read_csv(test_path, names=["x1", "x2", "label"])
+    params = dicto.load(params_path)
 
-    X = df_train[["x1", "x2"]].to_numpy()
-    # y_train = df_train["label"].to_numpy().astype(int)
+    df_train, df_test = dataget.toy.spirals().get()
 
-    # X_test = df_test[["x1", "x2"]].to_numpy()
-    # y_test = df_test["label"].to_numpy().astype(int)
+    X_train = df_train[["x0", "x1"]].to_numpy()
+    y_train = df_train["y"].to_numpy()
+    X_test = df_test[["x0", "x1"]].to_numpy()
+    y_test = df_test["y"].to_numpy()
 
-    X, y = preprocess(X, radius)
+    transform = MinMaxScaler()
+    X_train = transform.fit_transform(X_train)
+    X_test = transform.transform(X_test)
 
-    print(X.shape, y.shape, y.sum())
-
-    return
-
-    # transform = StandardScaler()
-    # X_train = transform.fit_transform(X_train)
-    # X_test = transform.transform(X_test)
-
-    model = MyModel(
-        memory_size=memory_size,
-        memory_output_size=2,
-        n_labels=n_classes,
-        n_heads=n_heads,
-        n_layers=n_layers,
-        n_neurons=n_neurons,
+    _ds_train = ContrastiveDataset(
+        X_train,
+        y_train,
+        batch_size=params.batch_size,
+        steps_per_epoch=params.steps_per_epoch,
+        noise_std=params.noise_std,
+        n_neighbors=params.n_neighbors,
+        n_hops=params.n_hops,
+        # transform=torch.tensor,
+        viz=viz,
     )
-    model.predict(X_train)
-    model.summary()
-
-    model.compile(
-        optimizer=tf.optimizers.Adam(0.001),
-        loss=tf.losses.sparse_categorical_crossentropy,
-        metrics=[tf.metrics.SparseCategoricalAccuracy()],
-    )
-
-    model.fit(
-        x=X_train,
-        y=y_train,
-        batch_size=1,
-        epochs=epochs,
-        validation_data=(X_test, y_test),
-    )
-    model.summary()
 
     if viz:
-        fig = px.scatter(None, X_train[0, :, 0], X_train[0, :, 1], color=y_train[0])
+        ds = copy(_ds_train)
 
-        xx, yy, zz = decision_boundaries(X_train, model)
-        xx = xx[0]
-        yy = yy[:, 0]
+        x, labels = next(iter(ds))
 
-        fig.add_trace(go.Contour(x=xx, y=yy, z=zz, opacity=0.5))
+        x = x.reshape(3, -1, x.shape[-1])
+
+        batch_size = len(x) // 3
+
+        anchor = x[0] + np.random.normal(scale=0.01, size=x[0].shape)
+        positive = x[1] + np.random.normal(scale=0.01, size=x[0].shape)
+        negative = x[2] + np.random.normal(scale=0.01, size=x[0].shape)
+
+        edge_x = []
+        edge_y = []
+        for i in range(len(anchor)):
+            edge_x.append(positive[i, 0])
+            edge_x.append(anchor[i, 0])
+            edge_x.append(negative[i, 0])
+            edge_x.append(None)
+
+            edge_y.append(positive[i, 1])
+            edge_y.append(anchor[i, 1])
+            edge_y.append(negative[i, 1])
+            edge_y.append(None)
+
+        fig = go.Figure(
+            data=[
+                go.Scatter(x=edge_x, y=edge_y, mode="lines", hoverinfo="none",),
+                go.Scatter(
+                    x=anchor[:, 0],
+                    y=anchor[:, 1],
+                    mode="markers",
+                    name="anchor",
+                    marker=dict(color="black"),
+                ),
+                go.Scatter(
+                    x=positive[:, 0],
+                    y=positive[:, 1],
+                    mode="markers",
+                    name="positive",
+                    marker=dict(color="yellow"),
+                ),
+                go.Scatter(
+                    x=negative[:, 0],
+                    y=negative[:, 1],
+                    mode="markers",
+                    name="negative",
+                    marker=dict(color="red"),
+                ),
+            ]
+        )
 
         fig.show()
 
+    # tensorflow
+    if model == "tf":
+        ds_train = tf.data.Dataset.from_generator(
+            lambda: _ds_train, (tf.float32, tf.float32), ([None, 2], [None, 1]),
+        )
 
-class MyModel(tf.keras.Model):
+        ds_test = ContrastiveDataset(
+            X_test,
+            y_test,
+            batch_size=params.batch_size,
+            steps_per_epoch=params.steps_per_epoch,
+            noise_std=params.noise_std,
+            n_neighbors=params.n_neighbors,
+            n_hops=params.n_hops,
+            # transform=torch.tensor,
+            viz=viz,
+        )
+        model = SiameseNetwork(n_layers=params.n_layers, n_units=params.n_units)
+
+        model.compile(
+            loss=tf.losses.BinaryCrossentropy(),
+            optimizer=tf.keras.optimizers.Adam(lr=params.lr),
+            metrics=[tf.metrics.BinaryAccuracy()],
+        )
+        model(X_train[: 3 * 2])
+        model.summary()
+
+        model.fit(ds_train, epochs=params.epochs)
+
+        if viz:
+            h = model(X_train, return_embeddings=True)
+
+            px.scatter(x=X_train[:, 0], y=X_train[:, 1], color=h[:, 0]).show()
+    else:
+        # pytorch
+        model = ContrastiveNet(
+            batch_size=params.batch_size * 2,
+            n_layers=params.n_layers,
+            n_units=params.n_units,
+            embedding_size=params.embedding_size,
+        )
+
+        net = skorch.NeuralNet(
+            model,
+            criterion=criterion,
+            batch_size=None,
+            max_epochs=params.epochs,
+            lr=params.lr,
+            optimizer=torch.optim.Adam,
+            # train_split=predefined_split(ds_test),
+            train_split=None,
+            device="cuda",
+        )
+
+        net.fit(_ds_train, y=None)
+
+        if viz:
+            net.module.eval()
+            h = (
+                net.module(
+                    torch.tensor(X_train, dtype=torch.float32, device="cuda"),
+                    return_embeddings=True,
+                )
+                .cpu()
+                .detach()
+                .numpy()
+            )
+
+            px.scatter(x=X_train[:, 0], y=X_train[:, 1], color=h[:, 0]).show()
+
+
+def criterion(**kwargs):
+    def get_loss(y_pred, y_true):
+
+        loss = torch.nn.functional.binary_cross_entropy_with_logits(y_pred, y_true)
+
+        # y_pred = y_pred.reshape(-1, 3, y_pred.shape[-1])
+        # loss = torch.nn.functional.triplet_margin_loss(anchor, positive, negative)
+
+        return loss
+
+    return get_loss
+
+
+class ContrastiveNet(torch.nn.Module):
     def __init__(
-        self, n_labels, n_layers=1, n_neurons=16,
+        self, batch_size: int, n_layers: int, n_units: int, embedding_size: int
     ):
         super().__init__()
 
-        self.encoder = tf.keras.Sequential(
-            [
-                tf.keras.layers.Dense(n_neurons, activation="relu")
-                for _ in range(n_layers)
-            ]
-            + [tf.keras.layers.Dense(1)]
-        )
+        mask = self.get_mask(batch_size)
 
-        self.mhsa_modules = [
-            tf.keras.Sequential(
-                [
-                    MultiHeadSelfAttention(n_neurons, n_heads),
-                    tf.keras.layers.Dense(n_neurons, activation="relu"),
-                ]
-            )
-            for _ in range(n_layers)
+        self.register_buffer("mask", torch.tensor(mask))
+
+        f_list = []
+
+        for i in range(n_layers):
+            f_list += [
+                torch.nn.Linear(n_units if i > 0 else 2, n_units),
+                torch.nn.BatchNorm1d(n_units),
+                torch.nn.ReLU(),
+            ]
+
+        f_list += [
+            torch.nn.Linear(n_units, embedding_size),
         ]
 
-        self.dense_out = tf.keras.layers.Dense(n_labels, activation="softmax")
+        self.f = torch.nn.Sequential(*f_list)
 
-    def call(self, inputs):
+        self.discriminator = torch.nn.Linear(embedding_size, 1)
 
-        net = inputs
-        print(net.shape)
+    def forward(self, x, return_embeddings=False):
 
-        self.embeddings(net)
-        print(net.shape)
+        z = self.f(x)
 
-        for module in self.mhsa_modules:
-            net = module(inputs)
-            print("msha", net.shape)
+        if return_embeddings:
+            return z
 
-        # net = net + net0
+        # z = self.g(z)
 
-        net = self.dense_out(net)
-        print(net.shape)
+        # z = z / torch.norm(z, p=2, dim=1, keepdim=True)
+        # z = torch.mm(z, z.t()) + self.mask
 
-        return net
+        z = z.reshape(3, -1, z.shape[-1])
+
+        anchor = z[0]
+        positive = z[1]
+        negative = z[2]
+
+        z = torch.cat(
+            [torch.abs(anchor - positive), torch.abs(anchor - negative)], dim=0
+        )
+
+        z = self.discriminator(z)
+
+        return z
+
+    def get_mask(self, batch_size):
+
+        mask = np.zeros((batch_size, batch_size), dtype=np.float32)
+        np.fill_diagonal(mask, -3.4028235e38)
+
+        return mask
 
 
-def preprocess(X, radius):
+class ContrastiveDataset(torch.utils.data.IterableDataset):
+    def __init__(
+        self,
+        x,
+        y,
+        batch_size: int,
+        steps_per_epoch: int,
+        noise_std: float,
+        n_neighbors: int,
+        n_hops: int,
+        transform: typing.Callable = None,
+        viz: bool = False,
+    ):
+        self.x = x
+        self.y = y
+        self.batch_size = batch_size
+        self.steps_per_epoch = steps_per_epoch
+        self.noise_std = noise_std
+        self.n_neighbors = n_neighbors
+        self.n_hops = n_hops
+        self.transform = transform
+        self.viz = viz
+        self.labels = np.concatenate(
+            [np.ones((self.batch_size, 1)), np.zeros((self.batch_size, 1))], axis=0
+        ).astype(np.float32)
+
+        N = len(self.x)
+
+        nbrs = NearestNeighbors(
+            n_neighbors=self.n_neighbors, algorithm="ball_tree"
+        ).fit(self.x)
+        distances, neighbors = nbrs.kneighbors(self.x)
+
+        self.relative_neighbors = []
+
+        for i in range(N):
+            node_neighbors = set(neighbors[i])
+
+            for _ in range(self.n_hops):
+                new_neighbors = neighbors[list(node_neighbors)].reshape(-1)
+                node_neighbors |= set(new_neighbors)
+
+            self.relative_neighbors.append(list(node_neighbors))
+
+        if self.viz:
+            plot_graph(self.x, self.relative_neighbors)
+
+    def __iter__(self):
+
+        N = len(self.x)
+
+        for step in range(self.steps_per_epoch):
+
+            idx_anchor = np.random.choice(N, self.batch_size, replace=True)
+            idx_positive = [
+                self.get_positive_for(self.relative_neighbors[i], i) for i in idx_anchor
+            ]
+            idx_negegative = [
+                self.get_negative_for(self.relative_neighbors[i], N) for i in idx_anchor
+            ]
+
+            anchor = self.x[idx_anchor]
+            pos = self.x[idx_positive]
+            neg = self.x[idx_negegative]
+
+            x = (
+                np.concatenate([anchor, pos, neg], axis=0)
+                .reshape(-1, 2)
+                .astype(np.float32)
+            )
+
+            # x = x + np.random.normal(scale=self.noise_std, size=x.shape)
+
+            x = x.astype(np.float32)
+
+            if self.transform:
+                x = self.transform(x)
+
+            yield x, self.labels
+
+    def get_negative_for(self, node_neighbors, N):
+
+        while True:
+            negative_index = np.random.randint(N)
+
+            if negative_index not in node_neighbors:
+                return negative_index
+
+    def get_positive_for(self, node_neighbors, i):
+        N = len(node_neighbors)
+
+        while True:
+            positive_index = np.random.randint(N)
+            positive_index = node_neighbors[positive_index]
+
+            if positive_index != i:
+                return positive_index
+
+
+def plot_graph(X, neighbors):
     N = len(X)
-    X0 = X[np.newaxis, ...]
-    X1 = X[:, np.newaxis, ...]
 
-    distance = np.linalg.norm(X0 - X1, axis=-1)
+    edge_x = []
+    edge_y = []
+    for i in range(N):
+        for j in neighbors[i]:
+            edge_x.append(X[i, 0])
+            edge_x.append(X[j, 0])
+            edge_x.append(None)
 
-    y = (distance <= radius).astype(np.int32)
+            edge_y.append(X[i, 1])
+            edge_y.append(X[j, 1])
+            edge_y.append(None)
 
-    # print("Neighbors", y.sum(axis=1) - 1)
-    # is_close = is_close[..., np.newaxis]
+    go.Figure(
+        [
+            go.Scatter(x=edge_x, y=edge_y, mode="lines", hoverinfo="none",),
+            go.Scatter(
+                x=X[:, 0], y=X[:, 1], mode="markers", marker=dict(color="black")
+            ),
+        ]
+    ).show()
 
-    X0 = np.tile(X0, (N, 1, 1))
-    X1 = np.tile(X1, (1, N, 1))
 
-    X = np.concatenate([X0, X1], axis=-1)
+# class SiameseNetwork(tf.keras.Model):
+#     def __init__(
+#         self, n_layers=1, n_units=16,
+#     ):
+#         super().__init__()
 
-    X = X.reshape((-1, 4))
-    y = y.reshape((-1,))
+#         self.model = tf.keras.Sequential(
+#             [tf.keras.layers.Dense(n_units, activation="relu") for _ in range(n_layers)]
+#             + [tf.keras.layers.Dense(1)]
+#         )
 
-    X, y = RandomOverSampler(random_state=42).fit_resample(X, y)
+#         self.discriminator = tf.keras.layers.Dense(1, activation="sigmoid")
 
-    return X, y
+#     def call(self, inputs, return_embeddings=False):
+
+#         if return_embeddings:
+#             return self.model(inputs)
+
+#         inputs = tf.reshape(inputs, [-1, 3, inputs.shape[-1]])
+
+#         anchor = inputs[:, 0]
+#         positive = inputs[:, 1]
+#         negative = inputs[:, 2]
+
+#         x1 = tf.concat([anchor, anchor], axis=0)
+#         x2 = tf.concat([positive, negative], axis=0)
+
+#         embedding1 = self.model(x1)
+#         embedding2 = self.model(x2)
+
+#         net = tf.abs(embedding1 - embedding2)
+
+#         net = self.discriminator(net)
+
+#         return net
+
+
+# class PairwiseRankingLoss(tf.losses.Loss):
+#     def __init__(self, margin=1):
+#         super().__init__()
+#         self.margin = margin
+
+#     def call(self, y_true, y_pred):
+#         norm = y_pred
+#         y_true = tf.cast(y_true, tf.float32)
+
+#         return (
+#             y_true * norm
+#         )  # + (1 - y_true) * tf.math.maximum(0.0, self.margin - norm)
+
+
+# class MeanPairwiseRankingLoss(tf.keras.metrics.Mean):
+#     def __init__(self, margin=1, **kwargs):
+#         super().__init__(**kwargs)
+#         self.margin = margin
+
+#     def update_state(self, y_true, y_pred, sample_weight=None):
+#         norm = y_pred
+#         y_true = tf.cast(y_true, tf.float32)
+
+#         loss = (
+#             y_true * norm
+#         )  # + (1 - y_true) * tf.math.maximum(0.0, self.margin - norm)
+
+#         return super().update_state(loss, sample_weight=sample_weight)
 
 
 def decision_boundaries(X_in, model, n=10):

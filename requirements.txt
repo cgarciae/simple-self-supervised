@@ -1,6 +1,0 @@
-tensorflow-gpu
-numpy
-pandas
-scikit-learn
-typer
-imbalanced-learn
