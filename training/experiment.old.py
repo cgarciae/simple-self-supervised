@@ -114,42 +114,75 @@ def main(
 
         fig.show()
 
-    # pytorch
-    model = ContrastiveNet(
-        batch_size=params.batch_size * 2,
-        n_layers=params.n_layers,
-        n_units=params.n_units,
-        embedding_size=params.embedding_size,
-    )
-
-    net = skorch.NeuralNet(
-        model,
-        criterion=criterion,
-        batch_size=None,
-        max_epochs=params.epochs,
-        lr=params.lr,
-        optimizer=torch.optim.Adam,
-        # train_split=predefined_split(ds_test),
-        train_split=None,
-        device="cuda",
-    )
-
-    net.fit(_ds_train, y=None)
-
-    net.module.eval()
-    h = (
-        net.module(
-            torch.tensor(X_train, dtype=torch.float32, device="cuda"),
-            return_embeddings=True,
+    # tensorflow
+    if model == "tf":
+        ds_train = tf.data.Dataset.from_generator(
+            lambda: _ds_train, (tf.float32, tf.float32), ([None, 2], [None, 1]),
         )
-        .cpu()
-        .detach()
-        .numpy()
-    )
 
-    h = PCA(1).fit_transform(h)
+        ds_test = ContrastiveDataset(
+            X_test,
+            y_test,
+            batch_size=params.batch_size,
+            steps_per_epoch=params.steps_per_epoch,
+            noise_std=params.noise_std,
+            n_neighbors=params.n_neighbors,
+            n_hops=params.n_hops,
+            # transform=torch.tensor,
+            viz=viz,
+        )
+        model = SiameseNetwork(n_layers=params.n_layers, n_units=params.n_units)
 
-    px.scatter(x=X_train[:, 0], y=X_train[:, 1], color=h[:, 0]).show()
+        model.compile(
+            loss=tf.losses.BinaryCrossentropy(),
+            optimizer=tf.keras.optimizers.Adam(lr=params.lr),
+            metrics=[tf.metrics.BinaryAccuracy()],
+        )
+        model(X_train[: 3 * 2])
+        model.summary()
+
+        model.fit(ds_train, epochs=params.epochs)
+
+        if viz:
+            h = model(X_train, return_embeddings=True)
+
+            px.scatter(x=X_train[:, 0], y=X_train[:, 1], color=h[:, 0]).show()
+    else:
+        # pytorch
+        model = ContrastiveNet(
+            batch_size=params.batch_size * 2,
+            n_layers=params.n_layers,
+            n_units=params.n_units,
+            embedding_size=params.embedding_size,
+        )
+
+        net = skorch.NeuralNet(
+            model,
+            criterion=criterion,
+            batch_size=None,
+            max_epochs=params.epochs,
+            lr=params.lr,
+            optimizer=torch.optim.Adam,
+            # train_split=predefined_split(ds_test),
+            train_split=None,
+            device="cuda",
+        )
+
+        net.fit(_ds_train, y=None)
+
+        if viz:
+            net.module.eval()
+            h = (
+                net.module(
+                    torch.tensor(X_train, dtype=torch.float32, device="cuda"),
+                    return_embeddings=True,
+                )
+                .cpu()
+                .detach()
+                .numpy()
+            )
+
+            px.scatter(x=X_train[:, 0], y=X_train[:, 1], color=h[:, 0]).show()
 
 
 def criterion(**kwargs):
@@ -190,11 +223,7 @@ class ContrastiveNet(torch.nn.Module):
 
         self.f = torch.nn.Sequential(*f_list)
 
-        self.discriminator = torch.nn.Sequential(
-            torch.nn.Linear(embedding_size, n_units),
-            torch.nn.ReLU(),
-            torch.nn.Linear(n_units, 1),
-        )
+        self.discriminator = torch.nn.Linear(embedding_size, 1)
 
     def forward(self, x, return_embeddings=False):
 
