@@ -64,87 +64,7 @@ def main(
     )
 
     if viz:
-        ds = copy(ds_train)
-
-        x, labels = next(iter(ds))
-
-        x = x.reshape(3, -1, x.shape[-1])
-
-        x = x[:, :32]
-
-        batch_size = len(x) // 3
-
-        anchor = x[0]
-        positive = x[1]
-        negative = x[2]
-
-        pos_edge_x = []
-        pos_edge_y = []
-        neg_edge_x = []
-        neg_edge_y = []
-
-        for i in range(len(anchor)):
-            pos_edge_x.append(anchor[i, 0])
-            pos_edge_x.append(positive[i, 0])
-            pos_edge_x.append(None)
-
-            pos_edge_y.append(anchor[i, 1])
-            pos_edge_y.append(positive[i, 1])
-            pos_edge_y.append(None)
-
-            neg_edge_x.append(anchor[i, 0])
-            neg_edge_x.append(negative[i, 0])
-            neg_edge_x.append(None)
-
-            neg_edge_y.append(anchor[i, 1])
-            neg_edge_y.append(negative[i, 1])
-            neg_edge_y.append(None)
-
-        fig = go.Figure(
-            data=[
-                go.Scatter(
-                    x=pos_edge_x,
-                    y=pos_edge_y,
-                    mode="lines",
-                    hoverinfo="none",
-                    marker=dict(color="blue"),
-                ),
-                go.Scatter(
-                    x=neg_edge_x,
-                    y=neg_edge_y,
-                    mode="lines",
-                    hoverinfo="none",
-                    marker=dict(color="red"),
-                ),
-                go.Scatter(
-                    x=anchor[:, 0],
-                    y=anchor[:, 1],
-                    mode="markers",
-                    name="anchor",
-                    marker=dict(color="black", size=8),
-                ),
-                go.Scatter(
-                    x=positive[:, 0],
-                    y=positive[:, 1],
-                    mode="markers",
-                    name="positive",
-                    marker=dict(color="blue", size=8),
-                ),
-                go.Scatter(
-                    x=negative[:, 0],
-                    y=negative[:, 1],
-                    mode="markers",
-                    name="negative",
-                    marker=dict(color="red", size=8),
-                ),
-            ]
-        )
-
-        # hide lines from legend
-        for trace in fig["data"][:2]:
-            trace["showlegend"] = False
-
-        fig.show()
+        ...
 
     # pytorch
     model = ContrastiveNet(
@@ -351,6 +271,91 @@ class ContrastiveDataset(torch.utils.data.IterableDataset):
 
             if positive_index != i:
                 return positive_index
+
+
+def visualize(ds_train):
+
+    ds = copy(ds_train)
+
+    x, labels = next(iter(ds))
+
+    x = x.reshape(3, -1, x.shape[-1])
+
+    x = x[:, :32]
+
+    batch_size = len(x) // 3
+
+    anchor = x[0]
+    positive = x[1]
+    negative = x[2]
+
+    pos_edge_x = []
+    pos_edge_y = []
+    neg_edge_x = []
+    neg_edge_y = []
+
+    for i in range(len(anchor)):
+        pos_edge_x.append(anchor[i, 0])
+        pos_edge_x.append(positive[i, 0])
+        pos_edge_x.append(None)
+
+        pos_edge_y.append(anchor[i, 1])
+        pos_edge_y.append(positive[i, 1])
+        pos_edge_y.append(None)
+
+        neg_edge_x.append(anchor[i, 0])
+        neg_edge_x.append(negative[i, 0])
+        neg_edge_x.append(None)
+
+        neg_edge_y.append(anchor[i, 1])
+        neg_edge_y.append(negative[i, 1])
+        neg_edge_y.append(None)
+
+    fig = go.Figure(
+        data=[
+            go.Scatter(
+                x=pos_edge_x,
+                y=pos_edge_y,
+                mode="lines",
+                hoverinfo="none",
+                marker=dict(color="blue"),
+            ),
+            go.Scatter(
+                x=neg_edge_x,
+                y=neg_edge_y,
+                mode="lines",
+                hoverinfo="none",
+                marker=dict(color="red"),
+            ),
+            go.Scatter(
+                x=anchor[:, 0],
+                y=anchor[:, 1],
+                mode="markers",
+                name="anchor",
+                marker=dict(color="black", size=8),
+            ),
+            go.Scatter(
+                x=positive[:, 0],
+                y=positive[:, 1],
+                mode="markers",
+                name="positive",
+                marker=dict(color="blue", size=8),
+            ),
+            go.Scatter(
+                x=negative[:, 0],
+                y=negative[:, 1],
+                mode="markers",
+                name="negative",
+                marker=dict(color="red", size=8),
+            ),
+        ]
+    )
+
+    # hide lines from legend
+    for trace in fig["data"][:2]:
+        trace["showlegend"] = False
+
+    fig.show()
 
 
 def plot_graph(X, neighbors):
