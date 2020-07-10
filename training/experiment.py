@@ -64,7 +64,7 @@ def main(
     )
 
     if viz:
-        ...
+        visualize(ds_train)
 
     # pytorch
     model = ContrastiveNet(
